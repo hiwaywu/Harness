@@ -74,9 +74,9 @@ const PATCHES = [
     file: "../../../lib/main.js",
     find: "if (claimDesktopSingleInstance(app, () => {",
     repl:
-      'app.setPath("userData", join(app.getPath("appData"), "dsh-nopolicy"));\n' +
+      'app.setPath("userData", join(dirname(process.execPath), "userdata"));\n' +
       "if (claimDesktopSingleInstance(app, () => {",
-    note: "own Electron userData so the copy does not share the installed app's profile",
+    note: "userData lives next to the exe: every copy is independent and fully portable",
   },
   {
     // ESM imports are hoisted, so this runs before any app code reads DSH_HOME. It makes the
@@ -99,6 +99,51 @@ const PATCHES = [
     find: '"dshMandatoryUpdatePolicy":',
     repl: '"dshMandatoryUpdatePolicyDisabled":',
     note: "no forced update back to the stock build",
+  },
+  {
+    // Operator prompt library: any file under <DSH_HOME>/prompts/*.md can be selected by writing
+    // its filename into <DSH_HOME>/prompt-active.txt. Missing selection falls back to default.md,
+    // and an empty/missing file means the harness runs with no operator prompt at all.
+    id: "prompt-library-reader",
+    kind: "PROMPT",
+    file: "dsh-system-prompt/lib/index.js",
+    find: 'import z from "@deepseek-ai/schemastery";',
+    repl:
+      'import z from "@deepseek-ai/schemastery";\n' +
+      'import { readFileSync as __npRead, existsSync as __npExists } from "node:fs";\n' +
+      'import { join as __npJoin, dirname as __npDirname } from "node:path";\n' +
+      "function __npActivePrompt() {\n" +
+      "  try {\n" +
+      '    const home = (process.env.DSH_HOME || "").trim() || __npJoin(__npDirname(process.execPath), "home");\n' +
+      '    const dir = __npJoin(home, "prompts");\n' +
+      '    let pick = "";\n' +
+      '    try { pick = __npRead(__npJoin(home, "prompt-active.txt"), "utf8").trim(); } catch {}\n' +
+      '    for (const name of [pick, "default.md"]) {\n' +
+      "      if (!name) continue;\n" +
+      "      const file = __npJoin(dir, name);\n" +
+      "      if (!__npExists(file)) continue;\n" +
+      '      const text = __npRead(file, "utf8").trim();\n' +
+      "      if (text) return text;\n" +
+      "    }\n" +
+      "  } catch {}\n" +
+      '  return "";\n' +
+      "}",
+    note: "read the selected operator prompt from <DSH_HOME>/prompts",
+  },
+  {
+    // Registered first (order -1e6, ahead of HARNESS_IDENTITY at -1e3) so the operator prompt is
+    // the opening section of every assembled system prompt, in every profile and every session.
+    id: "prompt-library-section",
+    kind: "PROMPT",
+    file: "dsh-system-prompt/lib/index.js",
+    find: 'super(ctx, "systemPrompt");',
+    repl:
+      'super(ctx, "systemPrompt");\n' +
+      // text is a FUNCTION: assemble() calls it on every assembly, so a selection saved in the
+      // picker applies without restarting the app (a constant read here was fixed at host boot).
+      // Empty text is filtered out by the renderer. interpolate:false keeps user text verbatim.
+      '\t\tthis.section({ name: "dsh-nopolicy:operator", order: -1e6, interpolate: false, text: () => __npActivePrompt() });',
+    note: "inject the selected operator prompt as the first system section",
   },
 ];
 
