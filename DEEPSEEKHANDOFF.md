@@ -104,6 +104,87 @@ is what kept a stale 1,503 B anchor in place for hours.
 
 ---
 
+## 4a. Prompt provenance — who wrote what, and how to add a new one
+
+No guessing: every prompt file has an owner. Sizes and hashes are from the live install
+(`%LOCALAPPDATA%\Programs\DSH-NoPolicy\home\prompts\`).
+
+| file | bytes | sha256 (first 8) | who wrote it | role |
+|---|---|---|---|---|
+| `default.md` | 25,273 | `3E1F3F21` | **the dsh-purge plugin**, saved 2026-11-05 18:50 when its prompt box was used | the operator prompt, injected at the head |
+| `prompt-inject.md` (`~/.dsh/`) | 25,273 | `3E1F3F21` | same file, same bytes | the source `build.ps1` seeds `default.md` from |
+| `plugin-en.md` | 29,427 | `1DD2FC61` | dsh-purge, shipped default (EN) | fallback prompt |
+| `plugin-zh.md` | 25,727 | `5BB958EA` | dsh-purge, shipped default (ZH) | fallback prompt |
+| `anchor.md` | 2,947 | `4FF1221B` | **written during this work** — `ANCHOR_TEXT` + language + compliance + named exceptions | tail anchor; **this is the file that made GLM refuse** |
+| `anchor-plugin.md` | 1,503 | `F32F2E48` | dsh-purge `ANCHOR_TEXT`, verbatim | tail anchor; proven compliant — ship this |
+| `language.md` | 143 | `6798D114` | written during this work | head line: answer in English |
+| `budget.md` | 215 | `20418663` | written during this work | head line: stop retrying failed tools |
+| `glm-spec.md` / `qwen-spec.md` / `ds-spec.md` | 26,328 / 14,788 / 20,528 | — | third party: `togg53192-cmd/jailbreaks` | per-model operating specs |
+
+So: **the operator never typed a prompt by hand.** `default.md` came from the plugin's own prompt
+box; `anchor.md` / `language.md` / `budget.md` came from this work; the `*-spec.md` files came from a
+public repo. That is the complete set.
+
+### How the assembly uses them on every turn
+
+```
+[language.md]            head extra, prepended 1st  (after the split — see §3)
+[budget.md]              head extra, prepended 2nd
+<default.md up to marker>  the operator prompt
+... other sections, tool text, runtime context ...
+<anchor-active.txt file>   the tail anchor  + any inline tail block from default.md
+```
+
+### Adding a new prompt — the recipe
+
+1. **Create the file** in `home\prompts\`, `.md`, name of 1–64 chars `[A-Za-z0-9._-]`:
+   ```powershell
+   notepad "$env:LOCALAPPDATA\Programs\DSH-NoPolicy\home\prompts\mynew.md"
+   ```
+   No registration, no rebuild — the picker lists whatever is there, and the assembler re-reads it
+   every turn.
+2. **Select it globally:** Settings → General → *Operator prompt* → pick → Save, or write the filename:
+   ```powershell
+   Set-Content "$env:LOCALAPPDATA\Programs\DSH-NoPolicy\home\prompt-active.txt" "mynew.md" -NoNewline
+   ```
+3. **Or bind it to one model only** in `home\prompt-map.json` (model ids are exactly what the session
+   log records under `request/header.config.model`):
+   ```json
+   {"default":"default.md","glm-5.3-flash":"mynew.md"}
+   ```
+   Resolution order: `map[model]` → `map.default` → `prompt-active.txt` → `default.md` →
+   `prompt-inject.md` → any other `.md`.
+4. **Prove it loaded** — the only trustworthy check:
+   ```powershell
+   Get-Content "$env:LOCALAPPDATA\Programs\DSH-NoPolicy\home\debug-prompt.json"
+   ```
+   `headChars` should change by roughly the new file's size, `model` should be the model you asked,
+   and `headStart` should begin with the file's first line (or `[LANGUAGE]`, which is prepended).
+
+### Adding a new tail anchor
+
+Same idea, different file: put `anchor-something.md` in `prompts\`, then either pick it in Settings →
+*Tail anchor* or write `home\anchor-active.txt`. Keep the first line meaningful — `[OPERATOR ANCHOR`
+or `House Rules` inside a *prompt* file also acts as a split marker (§3).
+
+**Rule learned the hard way:** an anchor that *names* prohibited categories primes them. Keep the
+anchor minimal and neutral; put language and tool-budget directives in the head files instead.
+
+### What to back up
+
+Only `home\`. It holds `prompts\` (all ten files above), `sessions\`, `storages\`, `.credentials.yaml`,
+`prompt-active.txt`, `anchor-active.txt`, `prompt-map.json`, `skills\`, `attachments\`.
+The harness itself does not need backing up — it is in git (`hiwaywu/Harness`) plus the built exe.
+
+```powershell
+robocopy "$env:LOCALAPPDATA\Programs\DSH-NoPolicy\home" "$env:USERPROFILE\OneDrive\Desktop\dsh-home-backup" /E
+```
+
+Note: on OneDrive-redirected profiles `$env:USERPROFILE\Desktop` is **not** the visible Desktop —
+`[Environment]::GetFolderPath('Desktop')` is. That mistake already put one backup in the wrong folder.
+
+---
+
 ## 5. Measured results
 
 ### 5a. The A/B the operator ran (decisive)
