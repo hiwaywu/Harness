@@ -1,0 +1,15 @@
+# build output and binaries stay local — never commit these
+dist/
+work/
+*.asar
+*.asar.unpacked/
+*.exe
+*.7z
+*.zip
+
+# runtime noise
+*.log
+marker.txt
+diagnose.txt
+userdata/
+home/
