@@ -110,40 +110,113 @@ const PATCHES = [
     find: 'import z from "@deepseek-ai/schemastery";',
     repl:
       'import z from "@deepseek-ai/schemastery";\n' +
-      'import { readFileSync as __npRead, existsSync as __npExists } from "node:fs";\n' +
+      'import { readFileSync as __npRead, existsSync as __npExists, readdirSync as __npList, writeFileSync as __npWrite } from "node:fs";\n' +
       'import { join as __npJoin, dirname as __npDirname } from "node:path";\n' +
-      "function __npActivePrompt() {\n" +
+      "function __npHome() {\n" +
+      '  return (process.env.DSH_HOME || "").trim() || __npJoin(__npDirname(process.execPath), "home");\n' +
+      "}\n" +
+      "/**\n" +
+      " * Ordered prompt sources for one model. prompt-map.json maps model id -> filename; the\n" +
+      " * saved global selection, prompts/default.md, home/prompt-inject.md and any other .md follow.\n" +
+      " * The first non-empty file wins, so the operator prompt can never resolve to nothing.\n" +
+      " */\n" +
+      "function __npPromptFiles(model) {\n" +
+      "  const home = __npHome();\n" +
+      '  const dir = __npJoin(home, "prompts");\n' +
+      "  const files = [];\n" +
+      "  let map = {};\n" +
       "  try {\n" +
-      '    const home = (process.env.DSH_HOME || "").trim() || __npJoin(__npDirname(process.execPath), "home");\n' +
-      '    const dir = __npJoin(home, "prompts");\n' +
-      '    let pick = "";\n' +
-      '    try { pick = __npRead(__npJoin(home, "prompt-active.txt"), "utf8").trim(); } catch {}\n' +
-      '    for (const name of [pick, "default.md"]) {\n' +
-      "      if (!name) continue;\n" +
+      '    map = JSON.parse(__npRead(__npJoin(home, "prompt-map.json"), "utf8"));\n' +
+      "  } catch {}\n" +
+      '  const pick = (name) => { if (typeof name === "string" && name.trim()) files.push(__npJoin(dir, name.trim())); };\n' +
+      "  if (model) { pick(map[model]); pick(map[String(model).toLowerCase()]); }\n" +
+      '  pick(map.default);\n' +
+      "  let active = \"\";\n" +
+      '  try { active = __npRead(__npJoin(home, "prompt-active.txt"), "utf8").trim(); } catch {}\n' +
+      "  pick(active);\n" +
+      '  pick("default.md");\n' +
+      '  files.push(__npJoin(home, "prompt-inject.md"));\n' +
+      "  try {\n" +
+      '    for (const name of __npList(dir).sort()) {\n' +
+      '      if (!name.toLowerCase().endsWith(".md")) continue;\n' +
       "      const file = __npJoin(dir, name);\n" +
+      "      if (!files.includes(file)) files.push(file);\n" +
+      "    }\n" +
+      "  } catch {}\n" +
+      "  return files;\n" +
+      "}\n" +
+      "function __npPromptForModel(model) {\n" +
+      "  for (const file of __npPromptFiles(model)) {\n" +
+      "    try {\n" +
       "      if (!__npExists(file)) continue;\n" +
       '      const text = __npRead(file, "utf8").trim();\n' +
       "      if (text) return text;\n" +
+      "    } catch {}\n" +
+      "  }\n" +
+      '  return "";\n' +
+      "}\n" +
+      "/**\n" +
+      " * Split one prompt file into the part that belongs at the top and the part that belongs at the\n" +
+      " * tail. A tail block marked by [OPERATOR ANCHOR is moved to the end of the system prompt, where\n" +
+      " * recency makes it outrank tool text and runtime context. No marker means everything is head.\n" +
+      " */\n" +
+      "const __NP_TAIL_MARKS = [\"[OPERATOR ANCHOR\", \"House Rules\"];\n" +
+      "function __npPromptSplit(model) {\n" +
+      "  const text = __npPromptForModel(model);\n" +
+      "  let head = text;\n" +
+      "  let tail = \"\";\n" +
+      "  let at = -1;\n" +
+      "  for (const mark of __NP_TAIL_MARKS) {\n" +
+      "    const found = text.indexOf(mark);\n" +
+      "    if (found > 0 && (at < 0 || found < at)) at = found;\n" +
+      "  }\n" +
+      "  if (at > 0) { head = text.slice(0, at).trim(); tail = text.slice(at).trim(); }\n" +
+      "  // The tail anchor is switchable: anchor-active.txt names which anchor file to use, so the\n" +
+      "  // plugin's original anchor and this build's amended one can be A/B'd without touching the head.\n" +
+      "  try {\n" +
+      '    const anchorDir = __npJoin(__npHome(), "prompts");\n' +
+      '    let anchorName = "";\n' +
+      '    try { anchorName = __npRead(__npJoin(__npHome(), "anchor-active.txt"), "utf8").trim(); } catch {}\n' +
+      "    const anchorCandidates = [];\n" +
+      "    if (anchorName) anchorCandidates.push(__npJoin(anchorDir, anchorName));\n" +
+      '    anchorCandidates.push(__npJoin(anchorDir, "anchor.md"));\n' +
+      "    for (const anchorFile of anchorCandidates) {\n" +
+      "      if (!__npExists(anchorFile)) continue;\n" +
+      '      const a = __npRead(anchorFile, "utf8").trim();\n' +
+      "      if (a) { tail = tail ? a + \"\\n\\n\" + tail : a; break; }\n" +
       "    }\n" +
       "  } catch {}\n" +
-      '  return "";\n' +
+      "  // Observable proof of what was injected, when it was injected, and for which model.\n" +
+      "  try {\n" +
+      '    __npWrite(__npJoin(__npHome(), "debug-prompt.json"), JSON.stringify({\n' +
+      "      at: new Date().toISOString(),\n" +
+      "      model: model || null,\n" +
+      "      headChars: head.length,\n" +
+      "      tailChars: tail.length,\n" +
+      '      headStart: head.slice(0, 120),\n' +
+      '      tailStart: tail.slice(0, 120)\n' +
+      "    }, null, 2));\n" +
+      "  } catch {}\n" +
+      "  return { head: head, tail: tail };\n" +
       "}",
-    note: "read the selected operator prompt from <DSH_HOME>/prompts",
+    note: "head at the top, dsh-purge anchor.md plus inline tail at the bottom, plus a debug record",
   },
   {
-    // Registered first (order -1e6, ahead of HARNESS_IDENTITY at -1e3) so the operator prompt is
-    // the opening section of every assembled system prompt, in every profile and every session.
-    id: "prompt-library-section",
+    // Two positions, one file. resolveContext() calls text(context) per assembly and the context
+    // carries assembly.agent.options.model, so this varies by model and picks up edits live.
+    //   head at -1e6 : opens the system prompt, ahead of HOST identity at -1e3
+    //   tail at 1e5  : after sections and runtime context, so the anchor rules win by recency
+    // A section's text is resolved once at registration, which is why this is a context.
+    id: "prompt-library-positions",
     kind: "PROMPT",
     file: "dsh-system-prompt/lib/index.js",
     find: 'super(ctx, "systemPrompt");',
     repl:
       'super(ctx, "systemPrompt");\n' +
-      // text is a FUNCTION: assemble() calls it on every assembly, so a selection saved in the
-      // picker applies without restarting the app (a constant read here was fixed at host boot).
-      // Empty text is filtered out by the renderer. interpolate:false keeps user text verbatim.
-      '\t\tthis.section({ name: "dsh-nopolicy:operator", order: -1e6, interpolate: false, text: () => __npActivePrompt() });',
-    note: "inject the selected operator prompt as the first system section",
+      "\t\tconst __npModelOf = (assembly) => assembly && assembly.agent && assembly.agent.options ? assembly.agent.options.model : void 0;\n" +
+      '\t\tthis.context({ name: "dsh-nopolicy:operator", order: -1e6, interpolate: false, text: (assembly) => __npPromptSplit(__npModelOf(assembly)).head });\n' +
+      '\t\tthis.context({ name: "dsh-nopolicy:anchor", order: 1e5, interpolate: false, text: (assembly) => __npPromptSplit(__npModelOf(assembly)).tail });',
+    note: "operator prompt at the top, its anchor block repeated at the tail for recency",
   },
 ];
 
@@ -164,5 +237,34 @@ for (const p of PATCHES) {
   console.log(`OK   ${p.id.padEnd(26)} ${p.kind.padEnd(8)} ${p.note}`);
 }
 
+// Second pass: strip the bundle-level persona prefix. `dsh-web-app` and friends set
+//     - id: system-prompt
+//       config:
+//         personaPrefix: >-
+//           You are a coding agent powered by the {{model}} model.
+// which tells every model which model it is and anchors it to that vendor's habits (language,
+// identity, refusal posture). It lives in YAML, not JS, so it is swept here.
+let strippedPrefixes = 0;
+(function sweepPersonaPrefix(dir, depth) {
+  if (depth > 3) return;
+  let entries = [];
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) { sweepPersonaPrefix(full, depth + 1); continue; }
+    if (!/\.ya?ml$/i.test(entry.name)) continue;
+    let text;
+    try { text = readFileSync(full, "utf8"); } catch { continue; }
+    if (!/coding agent powered by/.test(text)) continue;
+    const next = text.replace(/^[ \t]*You are a coding agent powered by[^\n]*$/gm, "");
+    if (next !== text) {
+      writeFileSync(full, next);
+      strippedPrefixes += 1;
+      console.log(`OK   persona-prefix-strip         PROMPT   ${full.replace(NM + "\\", "")}`);
+    }
+  }
+})(NM, 0);
+
 console.log(`\n${PATCHES.length - failures}/${PATCHES.length} applied`);
+console.log(`persona prefix blocks stripped: ${strippedPrefixes}`);
 process.exit(failures ? 1 : 0);

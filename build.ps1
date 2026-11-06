@@ -8,7 +8,9 @@
 param(
   [string]$InstallRoot = "$env:LOCALAPPDATA\Programs\DeepSeek Harness",
   [string]$OutRoot     = (Join-Path $PSScriptRoot "dist\dsh-nopolicy"),
-  [switch]$SkipAssemble
+  [switch]$SkipAssemble,
+  [switch]$WithPluginPort,
+  [switch]$NoPickerUi
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,6 +41,44 @@ Step "patching policy"
 node (Join-Path $here "tools\patch-nopolicy.mjs") $app
 if ($LASTEXITCODE -ne 0) { Fail "patch stage reported failures" }
 
+Step "stripping the bundle persona prefix"
+# dsh-web-app (and acp/headless/sdk/presets) ship:
+#     - id: system-prompt
+#       config:
+#         personaPrefix: >-
+#           You are a coding agent powered by the {{model}} model.
+# That line tells every model which model it is, anchoring vendor habits (language, identity,
+# refusal posture). It lives in YAML, not JS, so it is swept here.
+$yamlFiles = Get-ChildItem (Join-Path $app "dsh\node_modules\@deepseek-ai") -Recurse -File -Include *.yml,*.yaml -ErrorAction SilentlyContinue
+$stripped = 0
+foreach ($y in $yamlFiles) {
+  $text = [System.IO.File]::ReadAllText($y.FullName)
+  if ($text -notmatch 'coding agent powered by') { continue }
+  $next = [regex]::Replace($text, '(?m)^[ \t]*You are a coding agent powered by[^\r\n]*$', '')
+  if ($next -ne $text) {
+    [System.IO.File]::WriteAllText($y.FullName, $next, (New-Object System.Text.UTF8Encoding($false)))
+    $stripped += 1
+    Write-Host ("  stripped: " + $y.FullName.Replace($app + "\", ""))
+  }
+}
+if ($stripped -eq 0) { Write-Host "  nothing to strip" -ForegroundColor Yellow } else { Write-Host "  files changed: $stripped" }
+
+Step "porting dsh-purge patches (opt-in)"
+# DISABLED BY DEFAULT. The ported agent-loop / streaming / settings patches caused a real regression:
+# a sent message rendered as "thinking" and only appeared after switching sessions. Our own 11
+# patches plus the prompt layer are enough for policy. Port only on request, in batches, with a test
+# between each batch:
+#     .\build.ps1 -WithPluginPort
+$pluginRoot = Join-Path $here "vendor\dsh-purge"
+if ($WithPluginPort -and (Test-Path (Join-Path $pluginRoot "lib\core.js"))) {
+  node (Join-Path $here "tools\port-plugin-patches.mjs") $pluginRoot $app 2>&1 |
+    Where-Object { $_ -match '^(plugin patches|applied|no pattern)' } |
+    ForEach-Object { Write-Host "  $_" }
+  if ($LASTEXITCODE -ne 0) { Fail "plugin patch port failed" }
+} else {
+  Write-Host "  skipped (policy comes from our 11 patches + prompt layer)" -ForegroundColor DarkGray
+}
+
 Step "mounting the prompt picker plugin"
 $pluginSrc = Join-Path $here "plugin\dsh-prompt-picker"
 if (-not (Test-Path (Join-Path $pluginSrc "package.json"))) { Fail "plugin source missing at $pluginSrc" }
@@ -50,6 +90,19 @@ if (Test-Path $pluginDst) { Remove-Item $pluginDst -Recurse -Force }
 New-Item -ItemType Directory -Path $pluginDst -Force | Out-Null
 Copy-Item (Join-Path $pluginSrc "*") $pluginDst -Recurse -Force
 if (-not (Test-Path (Join-Path $pluginDst "lib\client.js"))) { Fail "client bundle did not copy" }
+if ($NoPickerUi) {
+  # Diagnostic variant: strip the client half so nothing of ours runs inside the conversation UI.
+  # The host routes and the file-based switching stay; only the settings row disappears.
+  $pkgPath = Join-Path $pluginDst "package.json"
+  $pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
+  $pkg.PSObject.Properties.Remove("dsh")
+  [System.IO.File]::WriteAllText($pkgPath, ($pkg | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
+  $altPkg = Join-Path $pluginAlt "package.json"
+  $alt = Get-Content $altPkg -Raw | ConvertFrom-Json
+  $alt.PSObject.Properties.Remove("dsh")
+  [System.IO.File]::WriteAllText($altPkg, ($alt | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
+  Write-Host "  client UI stripped (no settings row in this build)" -ForegroundColor Yellow
+}
 
 # The loader only resolves plugin names reachable from the install anchor's dependency graph
 # (dsh-app-boot collectInstallationScopePackages). The desktop host's anchor is the `dsh` package
@@ -154,24 +207,41 @@ foreach ($f in @(".credentials.yaml","prompt-inject.md")) {
 # system section; prompt-active.txt names the selection and falls back to default.md.
 $prompts = Join-Path $hm "prompts"
 New-Item -ItemType Directory -Path $prompts -Force | Out-Null
-$pluginLib = "C:\AI STUFF\DeepSeek\DSHMERGE\work\payload\app\node_modules\dsh-purge\lib"
-$seeds = @(
-  @{ name = "default.md";        path = (Join-Path $env:USERPROFILE ".dsh\prompt-inject.md") },
-  @{ name = "plugin-en.md";      path = (Join-Path $pluginLib "default-prompt-inject.en.md") },
-  @{ name = "plugin-zh.md";      path = (Join-Path $pluginLib "default-prompt-inject.zh.md") }
-)
-foreach ($s in $seeds) {
-  if (-not (Test-Path $s.path)) { Write-Host ("WARN prompt source missing: " + $s.name) -ForegroundColor Yellow; continue }
-  $text = [System.IO.File]::ReadAllText($s.path)
-  # Only empty files are refused: that is the real failure mode (bad source path, truncated copy).
-  # A deliberately short prompt is legitimate and ships as-is.
-  if ($text.Trim().Length -eq 0) { Write-Host ("WARN prompt is empty, skipped: " + $s.name) -ForegroundColor Yellow; continue }
-  if ($text.Trim().Length -lt 200) { Write-Host ("note: {0} is short ({1:N0} chars) - shipping as-is" -f $s.name, $text.Trim().Length) -ForegroundColor DarkYellow }
-  [System.IO.File]::WriteAllText((Join-Path $prompts $s.name), $text, (New-Object System.Text.UTF8Encoding($false)))
-  Write-Host ("prompt seeded: {0} ({1:N0} chars)" -f $s.name, $text.Length)
+# Self-contained: prompt sources are vendored under prompts\ in this repo, not read from another
+# project. anchor.md is dsh-purge's ANCHOR_TEXT (MIT); plugin-en/zh are its shipped defaults.
+$vendorPrompts = Join-Path $here "prompts"
+foreach ($s in Get-ChildItem $vendorPrompts -File -Filter *.md -ErrorAction SilentlyContinue) {
+  $text = [System.IO.File]::ReadAllText($s.FullName)
+  if ($text.Trim().Length -eq 0) { Write-Host ("WARN vendored prompt is empty, skipped: " + $s.Name) -ForegroundColor Yellow; continue }
+  [System.IO.File]::WriteAllText((Join-Path $prompts $s.Name), $text, (New-Object System.Text.UTF8Encoding($false)))
+  Write-Host ("prompt seeded: {0} ({1:N0} chars)" -f $s.Name, $text.Length)
+}
+# The operator's own prompt stays the default selection.
+$userPrompt = Join-Path $env:USERPROFILE ".dsh\prompt-inject.md"
+if (Test-Path $userPrompt) {
+  Copy-Item $userPrompt (Join-Path $prompts "default.md") -Force
+  Write-Host ("prompt seeded: default.md (operator prompt, {0:N0} chars)" -f ([System.IO.File]::ReadAllText($userPrompt)).Length)
+}
+$vendorSkills = Join-Path $here "skills\redteam"
+if (Test-Path $vendorSkills) {
+  $skillDst = Join-Path $hm "skills\redteam"
+  New-Item -ItemType Directory -Path $skillDst -Force | Out-Null
+  Copy-Item (Join-Path $vendorSkills "*.md") $skillDst -Force
+  Write-Host ("skills seeded: {0} files -> home\skills\redteam" -f (Get-ChildItem $skillDst -Filter *.md | Measure-Object).Count)
 }
 if (-not (Test-Path (Join-Path $hm "prompt-active.txt"))) {
   [System.IO.File]::WriteAllText((Join-Path $hm "prompt-active.txt"), "default.md", (New-Object System.Text.UTF8Encoding($false)))
+}
+# Per-model map. Resolution at runtime: model key -> "default" -> prompt-active.txt ->
+# prompts/default.md -> home/prompt-inject.md -> any other .md. Add keys freely, e.g.
+#   {"default":"default.md","glm-5.3":"glm.md","deepseek-v4.1-flash":"ds.md"}
+if (-not (Test-Path (Join-Path $hm "anchor-active.txt"))) {
+  [System.IO.File]::WriteAllText((Join-Path $hm "anchor-active.txt"), "anchor.md", (New-Object System.Text.UTF8Encoding($false)))
+  Write-Host "anchor selection seeded: anchor.md (amended); anchor-plugin.md is the plugin original"
+}if (-not (Test-Path (Join-Path $hm "prompt-map.json"))) {
+  $mapJson = '{"default":"default.md"}'
+  [System.IO.File]::WriteAllText((Join-Path $hm "prompt-map.json"), $mapJson, (New-Object System.Text.UTF8Encoding($false)))
+  Write-Host "prompt map seeded: default -> default.md"
 }
 Copy-Item (Join-Path $here "scripts\*.cmd") $OutRoot -Force
 

@@ -49,7 +49,7 @@ resources/app.asar  ->  18,235 files
   307 @deepseek-ai packages under dsh/node_modules/@deepseek-ai
 ```
 
-### 3. Patched the policy (7 patches, `tools/patch-nopolicy.mjs`)
+### 3. Patched the policy (11 patches, `tools/patch-nopolicy.mjs`)
 
 Every patch asserts its match count and fails loud on 0 or >1, so a changed upstream string cannot
 silently no-op.
@@ -143,3 +143,48 @@ restrictions were mostly host-imposed, that is visible as full compliance.
 
 `dist/`, `work/`, `*.asar`, launch logs, `marker.txt` — binaries and build output stay local. See
 `.gitignore`.
+
+---
+
+## Current state (updated)
+
+**Patches: 11 asserted, plus a YAML sweep.**
+
+| group | what it does |
+|---|---|
+| `sandbox-default` | deployment default `read-only` → `danger-full-access` |
+| `harness-identity`, `harness-identity-default` | host identity sentence and section removed |
+| `approval-autogrant`, `approval-sentence-ask`, `approval-sentence-never` | approvals grant once, before any policy runs; the prompt no longer announces a gate |
+| `userdata-isolation` | `userData` next to the exe, so copies never fight the installed app |
+| `portable-home` | `DSH_HOME` = `<exe dir>\home` |
+| `mandatory-update-off` | no forced update back to the stock build |
+| `prompt-library-reader`, `prompt-library-positions` | operator prompt injected at the top (`-1e6`) and its tail block at the bottom (`1e5`), per model, read fresh every assembly |
+
+**Persona prefix stripped.** `dsh-web-app`, `dsh-acp-app`, `dsh-headless`, `dsh-sdk-app` and `dsh-web-app/presets`
+ship `personaPrefix: "You are a coding agent powered by the {{model}} model."` in their `cordis.patch.yml`.
+That anchored every model to its vendor's habits (language, identity, refusal posture) and was swept out in
+`build.ps1`. Five files per build.
+
+**Prompt layer.** `home\prompts\*.md`, selected by `home\prompt-active.txt`, per-model via
+`home\prompt-map.json` (`{"default":"default.md","<model-id>":"<file>.md"}`). The selected file is split at a
+tail marker (`[OPERATOR ANCHOR` or `House Rules`): the head opens the system prompt, the tail is appended after
+tool text and runtime context where recency makes it win. `home\anchor-active.txt` chooses between
+`anchor.md` (amended: English-only + compliance clauses) and `anchor-plugin.md` (dsh-purge `ANCHOR_TEXT`
+verbatim) — a live A/B switch for testing whether an amendment changes a model's behaviour.
+
+**Picker UI.** `plugin/dsh-prompt-picker` adds two Settings → General rows (operator prompt, tail anchor) with
+preview, Save, and New. Routes: `/prompt-picker/list|read|status|set|new|set-anchor`, all behind the harness's
+own `connection.requestRejection` fence, allow-listed filenames, no path traversal. Build with
+`-NoPickerUi` to ship without the client half (diagnostic variant).
+
+**Observability.** Every assembly writes `home\debug-prompt.json` — model, head/tail sizes and the first 120
+chars of each. If `tailStart` does not begin with the anchor text, the prompt is not reaching the model.
+
+**Skills.** 22 `skills/redteam/*.md` files seed to `home\skills\redteam\`.
+
+**Vendored content (MIT).** `vendor/dsh-purge/` carries
+[HunYiSage/dsh-purge](https://github.com/HunYiSage/dsh-purge) v1.1.92 `lib/` so its own patch table can be
+run against this tree. 42 of its 79 working patterns match rc.5, which contradicts its README's "rc.3+
+unsupported" line — the code carries rc.5 anchors. Porting is **opt-in** (`build.ps1 -WithPluginPort`)
+because its agent-loop/streaming patches caused a UI regression, and it is off by default. `prompts/anchor.md`
+and `prompts/anchor-plugin.md` derive from its `ANCHOR_TEXT`; LICENSE and NOTICE are included.
