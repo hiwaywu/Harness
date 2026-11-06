@@ -19,6 +19,15 @@
  */
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync, copyFileSync } from "node:fs";
 import { join, dirname, relative, sep } from "node:path";
+import { createHash } from "node:crypto";
+
+const BLOCK = 4 * 1024 * 1024;
+function integrity(buf) {
+  const sha = (b) => createHash("sha256").update(b).digest("hex");
+  const blocks = [];
+  for (let i = 0; i < buf.length || i === 0; i += BLOCK) blocks.push(sha(buf.subarray(i, i + BLOCK)));
+  return { algorithm: "SHA256", hash: sha(buf), blockSize: BLOCK, blocks };
+}
 
 const align4 = (n) => (n + 3) & ~3;
 
@@ -102,9 +111,13 @@ function pack(inDir, archive, unpackedListPath) {
       node = node.files[parts[i]];
     }
     const isUnpacked = unpackedSet.has(f.path);
+    // Electron's native reader (shell/common/asar/archive.cc) only accepts `offset` as a
+    // decimal STRING; a numeric offset makes every lookup fail and Electron silently falls
+    // back to default_app.asar.
+    const integ = integrity(readFileSync(f.full));
     node.files[parts[parts.length - 1]] = isUnpacked
-      ? { size: f.size, unpacked: true }
-      : { size: f.size, offset };
+      ? { size: f.size, unpacked: true, integrity: integ }
+      : { size: f.size, offset: String(offset), integrity: integ };
     if (!isUnpacked) offset += f.size;
   }
 

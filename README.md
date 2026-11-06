@@ -3,8 +3,9 @@
 A rebuilt DeepSeek Harness desktop app with the host policy layer stripped, plus the tooling that
 builds it. Separated from the `DSHMERGE` project (Android APK / dsh-purge work) on 2026-11-06.
 
-**Status: the patched `app.asar` builds and verifies, but the relocated install does not launch yet.**
-See [What blocks the launch](#what-blocks-the-launch) and [HANDOFF.md](HANDOFF.md).
+**Status: working.** `build.ps1` + `package.ps1` produce `dist\DSH-NoPolicy.exe`, a single self-extracting
+exe that installs to `%LOCALAPPDATA%\Programs\DSH-NoPolicy`, adds a desktop shortcut, and starts the app.
+See [The launch blocker (solved)](#the-launch-blocker-solved).
 
 ---
 
@@ -72,50 +73,42 @@ Packed to a 170.7 MB `app.asar` and copied the full install to `dist/dsh-nopolic
 leftovers removed (`resources/app`, `app.dshpurge-prev`, `app.asar.rename-pending`), an isolated
 `home/` seeded with `~/.dsh/.credentials.yaml` + `prompt-inject.md`, and launcher scripts.
 
-### 5. Hit the launch blocker (unresolved)
+### 5. The launch blocker (solved)
 
-Everything above is verified. The relocated copy does not start:
+The relocated copy booted Electron's **default app** instead of ours (visible only on stdout: the
+`Electron 44.7.0 ... Usage: electron [options] [path]` banner). Electron's native asar reader
+(`shell/common/asar/archive.cc`) requires `"offset"` to be a decimal **string**; the packer wrote a
+number, so every lookup inside the repacked `app.asar` failed and Electron fell back to
+`default_app.asar`. The "control copy" failed for the same reason - it had been repacked too.
 
-* exits with **code 0**, no stdout, no stderr, instantly
-* no `userData` directory is created
-* a marker injected as the **first line** of `lib/main.js` never fires → no app code runs
-* the `.exe` is byte-identical to the original (same SHA-256)
-* **a control copy with the unmodified asar fails identically** → not caused by the patches
-* no absolute install path is embedded in the binary (checked UTF-16 and ASCII)
+Fix: `asar-tool.mjs` writes `offset` as a string and emits SHA-256 `integrity` blocks like
+`@electron/asar`. `build.ps1` now reads the archive back through the app's own exe with
+`ELECTRON_RUN_AS_NODE=1`, so a format Electron rejects fails the build instead of the launch.
+(Fuses read from the exe: RunAsNode on, EmbeddedAsarIntegrityValidation off, OnlyLoadAppFromAsar off.)
 
-So the gate is inside Electron's startup, before `main.js`. It has not been identified yet.
+### 6. Made it standalone
 
----
+| id | file | change |
+|---|---|---|
+| `portable-home` | `lib/main.js` | `DSH_HOME` defaults to `<exe dir>\home`, so the bare exe needs no launcher script |
+| `mandatory-update-off` | `package.json` | rename `dshMandatoryUpdatePolicy` so the forced-update window is never built |
+| (build step) | `resources/app-update.yml` | deleted; electron-updater only runs when it exists (it found 0.2.2-rc.1 and would have reinstalled the stock build) |
 
-## What blocks the launch
-
-Three things were tried and none moved it:
-
-1. changing `package.json` `name` and `dshDesktopAppId` — no effect
-2. `app.setPath("userData", ...)` — never executes, because `main.js` never runs
-3. launching with `-WorkingDirectory` set to the folder — no effect
-
-The one experiment that cannot be run from inside this session: launching the copy **while the
-installed app is closed**. The installed app is what hosts the agent doing the work, so closing it ends
-the session. `scripts/Diagnose.cmd` exists to capture that run's output (exit code, stdout/stderr,
-whether userData was created) with `ELECTRON_ENABLE_LOGGING=1`.
-
-Candidates not yet eliminated: a relocation check in the binary, asar integrity fuse validation
-(`EnableEmbeddedAsarIntegrityValidation` was **not** found as a string in the exe, but the fuse bits
-live in a numeric footer), or a Windows-side single-instance object that survives independent of the
-userData path.
-
----
+`package.ps1` wraps `dist\dsh-nopolicy` with WinRAR's SFX module (`Default.SFX`) into
+`dist\DSH-NoPolicy.exe` (~284 MB). First run: extract (~15 s) + desktop shortcut + launch. After that,
+use the shortcut. Re-running the exe updates the program files but keeps anything the app wrote to `home\`.
 
 ## Layout
 
 ```
 tools/asar-tool.mjs          asar extract/pack, no dependencies
-tools/patch-nopolicy.mjs     7 asserted patches over an extracted tree
+tools/patch-nopolicy.mjs     9 asserted patches over an extracted tree
 scripts/Diagnose.cmd         launch + capture exit code/output (run with the app closed)
 scripts/Start-NoPolicy.cmd   normal launcher
 scripts/Apply-ToInstalled.cmd  swap the patched asar into the real install, with backup
 scripts/Revert.cmd           restore app.asar.orig
+build.ps1                    extract, patch, pack, verify, assemble dist\dsh-nopolicy
+package.ps1                  wrap it into dist\DSH-NoPolicy.exe (needs WinRAR)
 dist/dsh-nopolicy/           assembled build (not committed: 550 MB+)
 dist/control-orig/           unmodified copy used as the A/B control (not committed)
 ```

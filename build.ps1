@@ -67,6 +67,17 @@ $checkFile = Join-Path $work "verify.js"
 node $checkFile $asar
 if ($LASTEXITCODE -ne 0) { Fail "archive verification failed" }
 
+# Our own parser is lenient; Electron's native reader is not (it rejects numeric offsets and then
+# silently boots default_app). Read the archive back through the app's own exe in node mode.
+$probe = Join-Path $work "electron-probe.js"
+[System.IO.File]::WriteAllText($probe, "const fs=require('fs');const a=process.argv[2];if(!fs.readFileSync(a+'/lib/main.js','utf8').includes('dsh-nopolicy'))process.exit(1);JSON.parse(fs.readFileSync(a+'/package.json','utf8'));process.exit(0);", (New-Object System.Text.UTF8Encoding($false)))
+$env:ELECTRON_RUN_AS_NODE = "1"
+$pp = Start-Process (Join-Path $InstallRoot "DeepSeek Harness.exe") -ArgumentList "`"$probe`"","`"$asar`"" -Wait -PassThru -NoNewWindow
+$rc = $pp.ExitCode
+Remove-Item Env:ELECTRON_RUN_AS_NODE
+if ($rc -eq 0) { Write-Host "Electron's own reader opens the archive" }
+if ($rc -ne 0) { Fail "Electron cannot read the packed archive" }
+
 if ($SkipAssemble) { Write-Host "`nasar ready: $asar"; exit 0 }
 
 Step "assembling $OutRoot"
@@ -77,6 +88,9 @@ foreach ($junk in @("app","app.dshpurge-prev","app.asar.rename-pending")) {
   if (Test-Path $p) { Remove-Item $p -Recurse -Force; Write-Host "removed plugin leftover: $junk" }
 }
 $dstRes = Join-Path $OutRoot "resources"
+# electron-updater only runs when app-update.yml exists; an update would reinstall the stock build
+$upd = Join-Path $dstRes "app-update.yml"
+if (Test-Path $upd) { Remove-Item $upd -Force; Write-Host "removed app-update.yml (auto-update off)" }
 Copy-Item $asar (Join-Path $dstRes "app.asar") -Force
 if (Test-Path (Join-Path $dstRes "app.asar.unpacked")) { Remove-Item (Join-Path $dstRes "app.asar.unpacked") -Recurse -Force }
 Copy-Item "$asar.unpacked" (Join-Path $dstRes "app.asar.unpacked") -Recurse -Force

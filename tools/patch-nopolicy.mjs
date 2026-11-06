@@ -78,6 +78,28 @@ const PATCHES = [
       "if (claimDesktopSingleInstance(app, () => {",
     note: "own Electron userData so the copy does not share the installed app's profile",
   },
+  {
+    // ESM imports are hoisted, so this runs before any app code reads DSH_HOME. It makes the
+    // bare .exe portable: no launcher script is needed to point the profile at <exeDir>\home.
+    id: "portable-home",
+    kind: "DEFAULT",
+    file: "../../../lib/main.js",
+    find: 'import WebSocket from "ws";',
+    repl:
+      'import WebSocket from "ws";\n' +
+      'if (!(process.env.DSH_HOME || "").trim()) process.env.DSH_HOME = join(dirname(process.execPath), "home");',
+    note: "DSH_HOME defaults to <exe dir>\\home, so the exe runs standalone",
+  },
+  {
+    // main.js only builds the mandatory-update policy when this key is in the manifest; the
+    // policy can block the UI until the stock (policy-bearing) version is installed.
+    id: "mandatory-update-off",
+    kind: "DEFAULT",
+    file: "../../../package.json",
+    find: '"dshMandatoryUpdatePolicy":',
+    repl: '"dshMandatoryUpdatePolicyDisabled":',
+    note: "no forced update back to the stock build",
+  },
 ];
 
 let failures = 0;
