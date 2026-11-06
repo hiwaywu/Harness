@@ -5,7 +5,10 @@
 #
 # Running the exe extracts to %LOCALAPPDATA%\Programs\DSH-NoPolicy (no admin), drops a desktop
 # shortcut "DeepSeek Harness (No Policy)", and starts the app. Files the app created later in
-# home\ are not in the archive, so re-running it (e.g. after a rebuild) keeps the profile.
+# home\ are not in the archive. Overwrite=2 skips files that already exist, so clicking the exe
+# again while the app is open just brings it forward instead of failing on locked files.
+# To install a NEWER build: close the app, delete %LOCALAPPDATA%\Programs\DSH-NoPolicy\resources,
+# then run the exe (home\ and your login are kept).
 
 param(
   [string]$Src = (Join-Path $PSScriptRoot "dist\dsh-nopolicy"),
@@ -24,7 +27,7 @@ $comment = @'
 Title=DeepSeek Harness (No Policy)
 Path=%LOCALAPPDATA%\Programs\DSH-NoPolicy
 Silent=2
-Overwrite=1
+Overwrite=2
 Setup="DeepSeek Harness.exe"
 Shortcut=D, "DeepSeek Harness.exe", "", "DeepSeek Harness without the host policy layer", "DeepSeek Harness (No Policy)"
 '@
