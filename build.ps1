@@ -54,7 +54,10 @@ $stripped = 0
 foreach ($y in $yamlFiles) {
   $text = [System.IO.File]::ReadAllText($y.FullName)
   if ($text -notmatch 'coding agent powered by') { continue }
+  # Two shapes in the wild: a bare block-scalar line, and an inline `prefix:` value (the web-app
+  # presets use the inline form, which a line-only sweep misses).
   $next = [regex]::Replace($text, '(?m)^[ \t]*You are a coding agent powered by[^\r\n]*$', '')
+  $next = [regex]::Replace($next, '(?m)^([ \t]*(?:prefix|personaPrefix):[ \t]*)You are a coding agent powered by[^\r\n]*$', '$1""')
   if ($next -ne $text) {
     [System.IO.File]::WriteAllText($y.FullName, $next, (New-Object System.Text.UTF8Encoding($false)))
     $stripped += 1

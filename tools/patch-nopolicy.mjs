@@ -171,6 +171,18 @@ const PATCHES = [
       "    if (found > 0 && (at < 0 || found < at)) at = found;\n" +
       "  }\n" +
       "  if (at > 0) { head = text.slice(0, at).trim(); tail = text.slice(at).trim(); }\n" +
+      "  // Head extras go AHEAD of the operator prompt, and only after the split — prepending before the\n" +
+      "  // split is silently discarded by the slice above. The instructions they must beat (\"default to\n" +
+      "  // Simplified Chinese\", retry-forever habits) live in the head, so the tail is the wrong place.\n" +
+      "  // They are files, so they can be edited or deleted without touching a prompt.\n" +
+      "  try {\n" +
+      "    for (const headFile of [\"language.md\", \"budget.md\"]) {\n" +
+      '      const hf = __npJoin(__npHome(), "prompts", headFile);\n' +
+      "      if (!__npExists(hf)) continue;\n" +
+      '      const ht = __npRead(hf, "utf8").trim();\n' +
+      '      if (ht) head = ht + "\\n\\n" + head;\n' +
+      "    }\n" +
+      "  } catch {}\n" +
       "  // The tail anchor is switchable: anchor-active.txt names which anchor file to use, so the\n" +
       "  // plugin's original anchor and this build's amended one can be A/B'd without touching the head.\n" +
       "  try {\n" +
