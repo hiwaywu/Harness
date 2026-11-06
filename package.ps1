@@ -52,6 +52,14 @@ setlocal
 set "TARGET=%~dp0"
 if not exist "%TARGET%home" mkdir "%TARGET%home" >nul 2>&1
 if exist "%TARGET%seed" robocopy "%TARGET%seed" "%TARGET%home" /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP >nul 2>&1
+rem Vendor-owned prompt files are always refreshed on upgrade; only default.md (the operator's own
+rem prompt) is seeded when absent. Without this, an amended anchor never reaches an existing install.
+if exist "%TARGET%seed\prompts" (
+  if not exist "%TARGET%home\prompts" mkdir "%TARGET%home\prompts" >nul 2>&1
+  for %%F in (anchor.md anchor-plugin.md plugin-en.md plugin-zh.md) do (
+    if exist "%TARGET%seed\prompts\%%F" copy /y "%TARGET%seed\prompts\%%F" "%TARGET%home\prompts\%%F" >nul 2>&1
+  )
+)
 if exist "%TARGET%seed" rmdir /s /q "%TARGET%seed" >nul 2>&1
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$d=[Environment]::GetFolderPath('Desktop'); $p=Join-Path $d 'DeepSeek Harness (No Policy).lnk'; $s=(New-Object -ComObject WScript.Shell).CreateShortcut($p); $s.TargetPath='%TARGET%DeepSeek Harness.exe'; $s.WorkingDirectory='%TARGET%'; $s.Description='DeepSeek Harness without the host policy layer'; $s.Save()" >nul 2>&1
 start "" "%TARGET%DeepSeek Harness.exe"

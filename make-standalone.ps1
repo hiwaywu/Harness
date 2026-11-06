@@ -37,6 +37,10 @@ if ($LASTEXITCODE -ne 0) { Fail "csc exited $LASTEXITCODE" }
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $skip = @("diagnose.txt","Diagnose.cmd","Apply-ToInstalled.cmd","Revert.cmd","Start-NoPolicy.cmd","boot.log","boot.err.log")
+# Never ship the operator's own secrets or identity inside a distributable exe. The installed folder
+# already holds these on the operator's machine; a fresh machine signs in normally instead of
+# inheriting someone else's credential store.
+$neverShip = @("home\.credentials.yaml", "home\.anonymous-user-id")
 $zipPath = Join-Path $obj "payload.zip"
 $srcFull = (Resolve-Path $Src).Path.TrimEnd('\')
 $zs = [System.IO.File]::Open($zipPath, [System.IO.FileMode]::Create)
@@ -46,6 +50,7 @@ try {
   foreach ($f in Get-ChildItem -LiteralPath $srcFull -Recurse -File -Force) {
     $rel = $f.FullName.Substring($srcFull.Length + 1)
     if ($skip -contains $rel) { continue }
+    if ($neverShip -contains $rel) { Write-Host "  not shipped (personal): $rel" -ForegroundColor DarkYellow; continue }
     if ($rel -like "home\*") { $rel = "seed\" + $rel.Substring(5) }
     $name = $rel.Replace('\','/')
     [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $f.FullName, $name, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
