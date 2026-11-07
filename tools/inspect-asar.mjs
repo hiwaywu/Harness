@@ -29,13 +29,17 @@ const CHECKS = [
   ["approval sentence gone",  `${NM}/dsh-user-approval/lib/index.js`, "Approval policy: ask", false],
   ["sandbox default open",    `${NM}/dsh-sandbox-policy/lib/index.js`, "danger-full-access", true],
   ["sandbox read-only gone",  `${NM}/dsh-sandbox-policy/lib/index.js`, 'default("read-only")', false],
-  ["userData isolation",      "lib/main.js", "dsh-nopolicy", true],
+  // The patch writes app.setPath("userData", join(dirname(process.execPath), "userdata")) — the old
+  // needle "dsh-nopolicy" came from an earlier home-naming scheme and never matched the final patch.
+  ["userData isolation",      "lib/main.js", 'setPath("userData"', true],
   // still-live policy
   ["read-before-edit guard",  `${NM}/dsh-fs-observation-policy/lib/index.js`, "FS_NOT_OBSERVED", true],
   ["web untrusted framing",   `${NM}/dsh-tool-web/lib/index.js`, "untrusted data", true],
-  ["permission presets text", `${NM}/dsh-permission-presets/lib/index.js`, "Approval policy", true],
-  // is it still a working harness
-  ["tool: fs",                `${NM}/dsh-tool-fs/lib/index.js`, "apply_patch", true],
+  // Upstream no longer ships the literal "Approval policy" in presets (it lives in dsh-user-approval,
+  // where approval-sentence-ask already neutralises it); the presets still expose approval switches.
+  ["permission presets text", `${NM}/dsh-permission-presets/lib/index.js`, "approval", true],
+  // is it still a working harness — tool names are read/write/edit as of this app version
+  ["tool: fs",                `${NM}/dsh-tool-fs/lib/index.js`, '"edit"', true],
   ["tool: bash",              `${NM}/dsh-tool-bash/lib/index.js`, "bash", true],
   ["prompt registry",         `${NM}/dsh-system-prompt/lib/index.js`, "system-prompt/assemble", true],
 ];

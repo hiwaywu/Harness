@@ -239,8 +239,10 @@ if (-not (Test-Path (Join-Path $hm "prompt-active.txt"))) {
 # prompts/default.md -> home/prompt-inject.md -> any other .md. Add keys freely, e.g.
 #   {"default":"default.md","glm-5.3":"glm.md","deepseek-v4.1-flash":"ds.md"}
 if (-not (Test-Path (Join-Path $hm "anchor-active.txt"))) {
-  [System.IO.File]::WriteAllText((Join-Path $hm "anchor-active.txt"), "anchor.md", (New-Object System.Text.UTF8Encoding($false)))
-  Write-Host "anchor selection seeded: anchor.md (amended); anchor-plugin.md is the plugin original"
+  # DEEPSEEKHANDOFF §5a/§6-P1: ship anchor-plugin.md — the A/B winner. The amended anchor.md names
+  # prohibited categories and primed the refusal; it stays available as the A/B alternative only.
+  [System.IO.File]::WriteAllText((Join-Path $hm "anchor-active.txt"), "anchor-plugin.md", (New-Object System.Text.UTF8Encoding($false)))
+  Write-Host "anchor selection seeded: anchor-plugin.md (A/B winner); anchor.md stays as the alternative"
 }if (-not (Test-Path (Join-Path $hm "prompt-map.json"))) {
   $mapJson = '{"default":"default.md"}'
   [System.IO.File]::WriteAllText((Join-Path $hm "prompt-map.json"), $mapJson, (New-Object System.Text.UTF8Encoding($false)))

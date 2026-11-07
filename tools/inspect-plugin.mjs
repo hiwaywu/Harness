@@ -19,8 +19,12 @@ function read(path) {
   return buf.subarray(s, s + Number(n.size)).toString("utf8");
 }
 
-console.log("plugin package in asar :", !!read("node_modules/dsh-prompt-picker/package.json"));
-console.log("plugin host code       :", !!read("node_modules/dsh-prompt-picker/lib/index.js"));
+// The mount resolves names through the app's own @deepseek-ai tree; the bare node_modules copy was
+// the first (failed) attempt and is no longer written by build.ps1.
+const PLUGIN = "dsh/node_modules/@deepseek-ai/dsh-prompt-picker";
+console.log("plugin package in asar :", !!read(PLUGIN + "/package.json"));
+console.log("plugin host code       :", !!read(PLUGIN + "/lib/index.js"));
+console.log("plugin client bundle   :", !!read(PLUGIN + "/lib/client.js"));
 
 const base = read("dsh/node_modules/@deepseek-ai/dsh-base/cordis.patch.yml") || "";
 console.log("mount row present      :", base.includes("id: prompt-picker"));
